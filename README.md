@@ -1,11 +1,14 @@
 # Arduino W5500 TCP/Modbus TCP 통신 프로젝트
 
+무선으로 구현했던 TCP/IP 프로젝트와는 달리 Arduino와 W5500 Ethernet 모듈을 이용하여 유선 LAN 기반 TCP 통신 구조를 구현하였습니다.
+
 ## 1. 프로젝트 개요
-
-본 프로젝트는 Arduino와 W5500 Ethernet 모듈을 이용하여 유선 LAN 기반 TCP 통신 구조를 구현하는 것을 목적으로 한다.
-
-Arduino는 W5500 모듈을 SPI 통신으로 제어하며, W5500은 Ethernet 통신을 담당한다.  
-PC에서는 C# WinForms 프로그램을 실행하여 TCP 클라이언트 역할을 수행하고, Arduino + W5500 장치는 TCP 서버 역할을 수행한다.
-
-초기 단계에서는 사람이 읽을 수 있는 문자열 기반 명령을 사용하여 LED를 제어하고 상태값을 확인한다.  
-이후에는 문자열 통신을 바이트 스트림 기반 통신 구조로 확장하여, 최종적으로 Modbus TCP 프로토콜 구현을 목표로 한다.
+C# WinForms 프로그램
+        ↓ TCP/IP
+공유기 또는 스위치 허브
+        ↓ LAN 케이블(10Base/T, 100Base/TX)
+W5500 Ethernet 모듈
+        ↓ SPI 통신
+Arduino
+        ↓ GPIO 제어
+LED 또는 센서
