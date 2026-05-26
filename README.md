@@ -4,11 +4,19 @@
 
 ## 1. 프로젝트 개요
 C# WinForms 프로그램
-        ↓ TCP/IP
+        │
+        │ TCP/IP
+        ▼
 공유기 또는 스위치 허브
-        ↓ LAN 케이블(10Base/T, 100Base/TX)
+        │
+        │ LAN 케이블 (10Base-T / 100Base-TX)
+        ▼
 W5500 Ethernet 모듈
-        ↓ SPI 통신
+        │
+        │ SPI 통신
+        ▼
 Arduino
-        ↓ GPIO 제어
+        │
+        │ GPIO 제어
+        ▼
 LED 또는 센서
