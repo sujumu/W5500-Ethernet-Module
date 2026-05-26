@@ -21,3 +21,4 @@ Arduino
         │ GPIO 제어
         ▼
 LED 또는 센서
+```
