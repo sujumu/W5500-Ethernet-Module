@@ -1,0 +1,297 @@
+// SPI 통신을 사용하므로 SPI 라이브러리 필요
+#include <SPI.h>
+
+// W5500 Ethernet 모듈 사용을 위한 Ethernet2 라이브러리
+#include <Ethernet.h>
+
+
+// W5500의 MAC 주소
+byte mac[] = {
+  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED
+};
+
+// Arduino W5500에 부여할 고정 IP
+IPAddress ip(192, 168, 219, 106);
+
+// 게이트웨이 주소
+IPAddress gateway(192, 168, 219, 1);
+
+// 서브넷 마스크
+IPAddress subnet(255, 255, 255, 0);
+
+// Modbus TCP 기본 포트는 502번
+EthernetServer server(502);
+
+/*
+  ================================
+  코일 어드레스맵
+  ================================
+
+  Modbus에서 Coil은 1bit 단위의 ON/OFF 데이터이다.
+  여기서는 Coil 주소 0~5를 Arduino 디지털 핀 2~7에 매핑한다.
+
+  Coil 0 -> D2
+  Coil 1 -> D3
+  Coil 2 -> D4
+  Coil 3 -> D5
+  Coil 4 -> D6
+  Coil 5 -> D7
+*/
+
+const byte coil[] = {2, 3, 4, 5, 6, 7};
+const byte COIL_COUNT = sizeof(coil) / sizeof(coil[0]);
+
+// 각 코일의 현재 상태 저장
+bool coil_state[COIL_COUNT] = {
+  LOW, LOW, LOW, LOW, LOW, LOW
+};
+
+/*
+  Modbus TCP 프레임 안의 16bit 값은 Big Endian 방식이다.
+
+  예)
+  req[8]  = 상위 바이트
+  req[9]  = 하위 바이트
+
+  따라서 0x00, 0x05를 합치면 0x0005가 된다.
+*/
+uint16_t readU16BE(byte highByte, byte lowByte) {
+  return ((uint16_t)highByte << 8) | lowByte;
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  // 코일에 매핑된 핀들을 출력으로 설정
+  for (byte i = 0; i < COIL_COUNT; i++) {
+    pinMode(coil[i], OUTPUT);
+    digitalWrite(coil[i], LOW);
+  }
+
+  /*
+    W5500 CS 핀 설정
+  */
+  Ethernet.init(10);
+
+  /*
+    고정 IP 방식으로 Ethernet 시작
+
+    형식:
+    Ethernet.begin(mac, ip, dns, gateway, subnet);
+  */
+  Ethernet.begin(mac, ip, gateway, subnet);
+
+  // TCP 서버 시작
+  server.begin();
+
+  Serial.println("================================");
+  Serial.println("Modbus TCP Simple Slave Start");
+  Serial.print("Server IP   : ");
+  Serial.println(Ethernet.localIP());
+  Serial.print("Server Port : ");
+  Serial.println(502);
+  Serial.println("================================");
+}
+
+void loop() {
+  // 클라이언트 접속 대기
+  EthernetClient client = server.available();
+
+  if (client) {
+    Serial.println("새로운 클라이언트 접속");
+
+    // readBytes가 너무 오래 막히지 않도록 타임아웃 설정
+    client.setTimeout(100);
+
+    while (client.connected()) {
+
+      /*
+        현재 coil_state 배열에 저장된 값을 실제 Arduino 핀에 출력한다.
+        즉, Modbus 명령으로 coil_state가 바뀌면 실제 LED 상태도 바뀐다.
+      */
+      for (byte i = 0; i < COIL_COUNT; i++) {
+        digitalWrite(coil[i], coil_state[i]);
+      }
+
+      /*
+        FC01, FC05 기본 요청 프레임은 12바이트이다.
+
+        Modbus TCP Request Frame:
+        [0~1]  Transaction ID
+        [2~3]  Protocol ID
+        [4~5]  Length
+        [6]    Unit ID
+        [7]    Function Code
+        [8~9]  Start Address 또는 Coil Address
+        [10~11] Quantity 또는 Command
+      */
+      if (client.available() >= 12) {
+        byte req[12];
+
+        int readLen = client.readBytes(req, sizeof(req));
+
+        // 정상적으로 12바이트를 읽지 못했다면 처리하지 않음
+        if (readLen != 12) {
+          Serial.println("수신 데이터 길이 오류");
+          continue;
+        }
+
+        // MBAP Header 해석
+        uint16_t transaction_id = readU16BE(req[0], req[1]);
+        uint16_t protocol_id    = readU16BE(req[2], req[3]);
+        uint16_t length_field   = readU16BE(req[4], req[5]);
+
+        // Modbus PDU 해석
+        uint8_t unit_id = req[6];
+        uint8_t fc      = req[7];
+
+        uint16_t addr = readU16BE(req[8], req[9]);
+        uint16_t data = readU16BE(req[10], req[11]);
+
+        Serial.println();
+        Serial.println("----- Modbus TCP Request -----");
+        Serial.print("Transaction ID : ");
+        Serial.println(transaction_id, HEX);
+        Serial.print("Protocol ID    : ");
+        Serial.println(protocol_id, HEX);
+        Serial.print("Length         : ");
+        Serial.println(length_field);
+        Serial.print("Unit ID        : ");
+        Serial.println(unit_id, HEX);
+        Serial.print("Function Code  : ");
+        Serial.println(fc, HEX);
+        Serial.print("Address        : ");
+        Serial.println(addr);
+        Serial.print("Data           : ");
+        Serial.println(data, HEX);
+
+        /*
+          ================================
+          FC 01: Read Coils
+          ================================
+
+          마스터가 현재 코일들의 ON/OFF 상태를 읽는 명령이다.
+
+          요청:
+          FC = 0x01
+          addr = 시작 코일 주소
+          data = 읽을 코일 개수
+
+          이 예제에서는 간단하게 coil_state[0]~coil_state[5] 전체 상태를
+          1바이트로 묶어서 응답한다.
+        */
+        if (fc == 0x01) {
+          Serial.println("Function 01: Read Coils");
+
+          byte coilData = 0x00;
+
+          /*
+            coil_state 배열의 상태를 1바이트 안에 비트 단위로 저장한다.
+
+            예)
+            coil_state[0] = 1이면 bit0 = 1
+            coil_state[1] = 1이면 bit1 = 1
+            coil_state[2] = 1이면 bit2 = 1
+          */
+          for (byte i = 0; i < COIL_COUNT; i++) {
+            if (coil_state[i] == HIGH) {
+              coilData |= (1 << i);
+            }
+          }
+
+          /*
+            FC01 Response Frame
+
+            [0~1] Transaction ID: 요청값 그대로 사용
+            [2~3] Protocol ID   : 요청값 그대로 사용
+            [4~5] Length        : 0x0004
+                                  Unit ID 1바이트
+                                  FC 1바이트
+                                  Byte Count 1바이트
+                                  Coil Data 1바이트
+            [6]   Unit ID
+            [7]   Function Code
+            [8]   Byte Count
+            [9]   Coil Data
+          */
+          byte res[] = {
+            req[0], req[1],
+            req[2], req[3],
+            0x00, 0x04,
+            unit_id,
+            fc,
+            0x01,
+            coilData
+          };
+
+          client.write(res, sizeof(res));
+
+          Serial.print("Coil Data Response: 0b");
+          for (int i = 7; i >= 0; i--) {
+            Serial.print((coilData >> i) & 0x01);
+          }
+          Serial.println();
+        }
+
+        /*
+          ================================
+          FC 05: Write Single Coil
+          ================================
+
+          마스터가 특정 코일 1개를 ON/OFF하는 명령이다.
+
+          요청:
+          FC = 0x05
+          addr = 제어할 코일 주소
+          data = 0xFF00이면 ON
+                 0x0000이면 OFF
+
+          FC05의 특징:
+          정상 처리되면 요청 프레임을 그대로 응답으로 돌려준다.
+        */
+        else if (fc == 0x05) {
+          Serial.println("Function 05: Write Single Coil");
+
+          // 코일 주소가 배열 범위를 벗어나면 처리하지 않음
+          if (addr >= COIL_COUNT) {
+            Serial.println("오류: 존재하지 않는 코일 주소");
+            continue;
+          }
+
+          if (data == 0xFF00) {
+            coil_state[addr] = HIGH;
+            Serial.print("Coil ");
+            Serial.print(addr);
+            Serial.println(" ON");
+          }
+          else if (data == 0x0000) {
+            coil_state[addr] = LOW;
+            Serial.print("Coil ");
+            Serial.print(addr);
+            Serial.println(" OFF");
+          }
+          else {
+            Serial.println("오류: 잘못된 FC05 명령값");
+            continue;
+          }
+
+          /*
+            FC05는 정상 처리 시 request를 그대로 response로 보낸다.
+            이것이 Modbus FC05의 기본 응답 방식이다.
+          */
+          client.write(req, sizeof(req));
+        }
+
+        /*
+          지원하지 않는 Function Code가 들어온 경우
+        */
+        else {
+          Serial.println("지원하지 않는 Function Code");
+        }
+      }
+    }
+
+    client.stop();
+    Serial.println("클라이언트 접속 해제");
+  }
+}
