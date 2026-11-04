@@ -1,4 +1,5 @@
 # W5500 Ethernet Communication Controller
+샘플 코드 참고 : https://bota.tistory.com/category/%EB%85%B9%EC%B9%B8%EB%8B%A4
 
 Arduino와 W5500 Ethernet 모듈을 활용하여 유선 LAN 기반 TCP/IP 통신 및 Modbus TCP 제어 시스템을 구현한 프로젝트입니다.
 
